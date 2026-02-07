@@ -1,0 +1,17 @@
+# Rust build output
+target/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# JetBrains / RustRover
+.idea/
+*.iml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
