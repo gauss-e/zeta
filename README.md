@@ -1,46 +1,49 @@
 # passthrough-proxy
 
-高性能透传代理服务：
-- Client 发送请求到 `/proxy`，query 带加密参数（默认参数名 `u`）。
-- 服务端解密得到第三方完整 URL。
-- 使用原请求 method/header/body 发起上游请求。
-- 上游返回后，status/header/body 原样透传给 client（去除 hop-by-hop 头）。
+A high-performance passthrough proxy service:
+- Clients call `/proxy` with an encrypted query parameter (default name: `u`).
+- The server decrypts the parameter to get the full upstream third-party URL.
+- It forwards the original request method, headers, and body to that upstream URL.
+- It returns the upstream response status, headers, and body back to the client as-is (except hop-by-hop headers).
 
-## 运行
+## Run
 
 ```bash
 cp .env.example .env
-# 填写 DECRYPT_KEY_B64
+# Set DECRYPT_KEY_B64 in .env
 cargo run
 ```
 
-## 配置项
+## Configuration
 
-- `LISTEN_ADDR`：监听地址，默认 `0.0.0.0:8080`
-- `DECRYPT_KEY_B64`：32字节 AES-256-GCM 密钥（base64url，无 padding）
-- `URL_PARAM_NAME`：加密 URL 的 query 参数名，默认 `u`
-- `REQUEST_TIMEOUT_SECS`：上游请求超时秒数，默认 `30`
+- `LISTEN_ADDR`: listening address, default `0.0.0.0:8080`
+- `DECRYPT_KEY_B64`: 32-byte AES-256-GCM key in base64url (no padding)
+- `URL_PARAM_NAME`: encrypted URL query parameter name, default `u`
+- `REQUEST_TIMEOUT_SECS`: upstream request timeout in seconds, default `30`
 
-## 加密格式
+## Encryption Format
 
-`u` 的值是 `base64url_no_pad(nonce(12 bytes) || ciphertext_and_tag)`。
-明文内容是完整 URL，例如：
+The `u` value format is:
+
+`base64url_no_pad(nonce(12 bytes) || ciphertext_and_tag)`
+
+The plaintext is a full URL, for example:
 
 ```text
 https://httpbin.org/anything?x=1
 ```
 
-使用和服务端一致的 `DECRYPT_KEY_B64`，按 AES-256-GCM 加密后拼接 nonce+ciphertext+tag，再做 base64url 编码。
+Use the same `DECRYPT_KEY_B64` as the server. Encrypt with AES-256-GCM, then concatenate `nonce + ciphertext + tag`, and finally encode with base64url (no padding).
 
-## 工具模块
+## Utility Module
 
-项目内置了 `UrlCrypto` 工具（`src/crypto.rs`），提供：
-- `decrypt_to_url`：解密 `u` 参数得到目标 URL（服务主流程使用）
-- `encrypt_url`：将明文 URL 加密为 `u` 参数值（便于你在业务代码中复用）
+This project includes a `UrlCrypto` utility in `src/crypto.rs`:
+- `decrypt_to_url`: decrypts `u` into the upstream URL (used by the main request flow)
+- `encrypt_url`: encrypts a plaintext URL into a `u` value (for internal reuse)
 
-当前项目只保留一个二进制目标（主服务），不再包含独立的 `encrypt_url` 可执行文件。
+The project now has only one binary target (the proxy service).
 
-## 接口示例
+## Example Request
 
 ```bash
 curl -i "http://127.0.0.1:8080/proxy?u=<encrypted>" \
