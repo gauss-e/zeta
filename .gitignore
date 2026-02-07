@@ -1,11 +1,6 @@
 # Rust build output
 target/
 
-# Local environment files
-.env
-.env.*
-!.env.example
-
 # JetBrains / RustRover
 .idea/
 *.iml
