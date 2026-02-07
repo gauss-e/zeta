@@ -1,4 +1,4 @@
-# passthrough-proxy
+# Zeta
 
 A high-performance passthrough proxy service:
 - Clients call `/proxy` with an encrypted query parameter (default name: `u`).
