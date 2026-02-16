@@ -5,17 +5,17 @@ edition = "2021"
 default-run = "zeta"
 
 [dependencies]
-aes-gcm = "0.10"
+aes = "0.7"
 anyhow = "1"
 axum = "0.7"
 base64 = "0.22"
+block-modes = "0.8"
 futures-util = "0.3"
 http = "1"
-http-body-util = "0.1"
+md5 = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "stream"] }
-serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url = "2"
 dotenvy = "0.15"
+url = "2.5.8"

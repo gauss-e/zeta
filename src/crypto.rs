@@ -1,64 +1,77 @@
-use aes_gcm::aead::rand_core::RngCore;
-use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
-    Aes256Gcm, Nonce,
-};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use url::Url;
+use std::error::Error;
+use aes::{Aes128};
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE_NO_PAD};
+use base64::Engine;
+use block_modes::block_padding::Pkcs7;
+use block_modes::{BlockMode, Ecb};
+use md5;
 
 pub struct UrlCrypto {
-    cipher: Aes256Gcm,
+    key: String
 }
 
+type Aes128Ecb = Ecb<Aes128, Pkcs7>;
+
 impl UrlCrypto {
-    pub fn from_key(key: &[u8; 32]) -> anyhow::Result<Self> {
-        let cipher = Aes256Gcm::new_from_slice(key)
-            .map_err(|e| anyhow::anyhow!("failed to init cipher: {e}"))?;
-        Ok(Self { cipher })
+    pub fn from_password(password: &str) -> Result<Self, Box<dyn Error>> {
+        Ok(Self{key: String::from(password)})
     }
 
-    pub fn decrypt_to_url(&self, encrypted: &str) -> anyhow::Result<Url> {
-        let raw = URL_SAFE_NO_PAD
-            .decode(encrypted)
-            .map_err(|e| anyhow::anyhow!("invalid encrypted url encoding: {e}"))?;
+    pub fn decrypt_param(&self, encrypted: &str) -> Result<String, Box<dyn Error>> {
+        let (mode, payload) = parse_mode(encrypted)?;
 
-        if raw.len() <= 12 {
-            anyhow::bail!("invalid encrypted payload: too short");
-        }
-
-        let (nonce_raw, cipher_raw) = raw.split_at(12);
-
-        let plain = self
-            .cipher
-            .decrypt(Nonce::from_slice(nonce_raw), cipher_raw)
-            .map_err(|_| anyhow::anyhow!("url decrypt failed"))?;
-
-        let plain_str = String::from_utf8(plain)
-            .map_err(|_| anyhow::anyhow!("decrypted url is not valid utf-8"))?;
-
-        let parsed =
-            Url::parse(&plain_str).map_err(|e| anyhow::anyhow!("decrypted url is invalid: {e}"))?;
-
-        match parsed.scheme() {
-            "http" | "https" => Ok(parsed),
-            _ => anyhow::bail!("decrypted url must be http or https"),
+        match mode {
+            DecryptMode::BASE64 => {
+                let decoded = decode_param_by_base64(payload)?;
+                Ok(String::from_utf8(decoded)?)
+            }
+            DecryptMode::AES => decode_param_by_aes(&*self.key, payload),
         }
     }
+}
 
-    #[allow(dead_code)]
-    pub fn encrypt_url(&self, url: &str) -> anyhow::Result<String> {
-        let mut nonce = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce);
+#[derive(Debug, Clone, Copy)]
+enum DecryptMode {
+    BASE64,
+    AES,
+}
 
-        let encrypted = self
-            .cipher
-            .encrypt(Nonce::from_slice(&nonce), url.as_bytes())
-            .map_err(|_| anyhow::anyhow!("failed to encrypt url"))?;
-
-        let mut payload = Vec::with_capacity(12 + encrypted.len());
-        payload.extend_from_slice(&nonce);
-        payload.extend_from_slice(&encrypted);
-
-        Ok(URL_SAFE_NO_PAD.encode(payload))
+fn parse_mode(input: &str) -> anyhow::Result<(DecryptMode, &str)> {
+    if let Some(rest) = input.strip_prefix("{BASE64}") {
+        return Ok((DecryptMode::BASE64, rest));
     }
+    if let Some(rest) = input.strip_prefix("{AES}") {
+        return Ok((DecryptMode::AES, rest));
+    }
+    anyhow::bail!("missing or unsupported encryption prefix; expected {{BASE64}} or {{AES}}")
+}
+
+fn decode_param_by_base64(input: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+    let decoded = URL_SAFE_NO_PAD
+        .decode(input)
+        .or_else(|_| STANDARD_NO_PAD.decode(input))
+        .or_else(|_| STANDARD.decode(input))?;
+    Ok(decoded)
+}
+
+fn decode_param_by_aes(key: &str,
+            encrypted_bytes: &str) -> Result<String, Box<dyn Error>> {
+    let key = create_aes_key(key);
+
+    let cipher = Aes128Ecb::new_from_slices(&key, &[])?;
+
+    let cipher_bytes = decode_param_by_base64(encrypted_bytes)?;
+    let decrypted_data = cipher.decrypt_vec(cipher_bytes.as_ref())?;
+
+    let plaintext = String::from_utf8(decrypted_data)?;
+
+    Ok(plaintext)
+}
+
+fn create_aes_key(secret_key: &str) -> [u8; 16] {
+    let key_bytes = secret_key.as_bytes();
+
+    let digest = md5::compute(key_bytes);
+
+    digest.0
 }

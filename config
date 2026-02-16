@@ -4,9 +4,10 @@ LISTEN_ADDR=0.0.0.0:8080
 # Required: base64url (no padding) encoding of a 32-byte key
 # Generate with: openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 DECRYPT_KEY_B64=mzO9eyHq0BFYBmlO5Vqb-3z0HKN_VDaNZ_bKodCKxbo
-
+# password for aes
+AES_PASSWORD=hrmlshk13
 # Query parameter name for the encrypted upstream URL
-URL_PARAM_NAME=oed
+URL_PARAM_NAME=oeid
 
 # Upstream passthrough request timeout (seconds)
 REQUEST_TIMEOUT_SECS=30

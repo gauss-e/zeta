@@ -1,31 +1,28 @@
 # Zeta
 
 A high-performance passthrough proxy service:
-- Clients call `/proxy` with an encrypted query parameter (default name: `u`).
+- Clients call `/data` with an encrypted query parameter (default name: `oeid`).
 - The server decrypts the parameter to get the full upstream third-party URL.
 - It forwards the original request method, headers, and body to that upstream URL.
 - It returns the upstream response status, headers, and body back to the client as-is (except hop-by-hop headers).
 
 ## Run
 
-```bash
-cp .env.example .env
-# Set DECRYPT_KEY_B64 in .env
-cargo run
-```
-
 ## Configuration
 
+The service loads environment variables from a `config` file in the project root.
+
 - `LISTEN_ADDR`: listening address, default `0.0.0.0:8080`
-- `DECRYPT_KEY_B64`: 32-byte AES-256-GCM key in base64url (no padding)
-- `URL_PARAM_NAME`: encrypted URL query parameter name, default `u`
+- `AES_PASSWORD`: password for AES decryption (used to derive a key)
+- `URL_PARAM_NAME`: encrypted URL query parameter name, default `oeid`
 - `REQUEST_TIMEOUT_SECS`: upstream request timeout in seconds, default `30`
 
 ## Encryption Format
 
-The `u` value format is:
+The `u` value format includes a prefix that selects the decode path:
 
-`base64url_no_pad(nonce(12 bytes) || ciphertext_and_tag)`
+- `{BASE64}<payload>`: payload is base64 (standard or url-safe, padding optional) of the plaintext URL.
+- `{AES}<payload>`: payload is base64 (standard or url-safe, padding optional) of AES-ECB ciphertext with PKCS7 padding.
 
 The plaintext is a full URL, for example:
 
@@ -33,7 +30,7 @@ The plaintext is a full URL, for example:
 https://httpbin.org/anything?x=1
 ```
 
-Use the same `DECRYPT_KEY_B64` as the server. Encrypt with AES-256-GCM, then concatenate `nonce + ciphertext + tag`, and finally encode with base64url (no padding).
+For `{AES}`, the AES-128 key is `MD5(AES_PASSWORD UTF-8 bytes)` to match `SecretKeySpec` derivation in Java. Encrypt with AES-ECB/PKCS7 and base64-encode the ciphertext.
 
 ## Utility Module
 
@@ -46,7 +43,7 @@ The project now has only one binary target (the proxy service).
 ## Example Request
 
 ```bash
-curl -i "http://127.0.0.1:8080/proxy?u=<encrypted>" \
+curl -i "http://127.0.0.1:8080/data?oeid=<encrypted>" \
   -H 'x-test: 1' \
   -d '{"hello":"world"}'
 ```

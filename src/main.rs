@@ -8,10 +8,10 @@ use axum::{
     routing::any,
     Router,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::TryStreamExt;
 use reqwest::Client;
 use tracing::{error, info};
+use url::Url;
 
 mod crypto;
 use crypto::UrlCrypto;
@@ -30,7 +30,7 @@ const HOP_BY_HOP_HEADERS: [&str; 8] = [
 #[derive(Clone)]
 struct Config {
     listen_addr: SocketAddr,
-    decrypt_key: [u8; 32],
+    aes_password: String,
     url_param_name: String,
     request_timeout_secs: u64,
 }
@@ -39,13 +39,12 @@ impl Config {
     fn from_env() -> anyhow::Result<Self> {
         let listen_addr =
             std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-        let key_b64 = std::env::var("DECRYPT_KEY_B64").map_err(|_| {
+        let aes_password = std::env::var("AES_PASSWORD").map_err(|_| {
             anyhow::anyhow!(
-                "missing env: DECRYPT_KEY_B64 (base64url of 32-byte key). \
-Fix: cp .env.example .env and set DECRYPT_KEY_B64, or set it in your RustRover Run Configuration."
+                "missing env: AES_PASSWORD. Fix: set AES_PASSWORD in ./config or in your RustRover Run Configuration."
             )
         })?;
-        let url_param_name = std::env::var("URL_PARAM_NAME").unwrap_or_else(|_| "u".to_string());
+        let url_param_name = std::env::var("URL_PARAM_NAME").unwrap_or_else(|_| "oeid".to_string());
         let request_timeout_secs = std::env::var("REQUEST_TIMEOUT_SECS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
@@ -54,17 +53,9 @@ Fix: cp .env.example .env and set DECRYPT_KEY_B64, or set it in your RustRover R
         let listen_addr = SocketAddr::from_str(&listen_addr)
             .map_err(|e| anyhow::anyhow!("invalid LISTEN_ADDR: {e}"))?;
 
-        let key_raw = URL_SAFE_NO_PAD
-            .decode(key_b64)
-            .map_err(|e| anyhow::anyhow!("invalid DECRYPT_KEY_B64: {e}"))?;
-
-        let decrypt_key: [u8; 32] = key_raw
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("DECRYPT_KEY_B64 must decode to exactly 32 bytes"))?;
-
         Ok(Self {
             listen_addr,
-            decrypt_key,
+            aes_password,
             url_param_name,
             request_timeout_secs,
         })
@@ -80,7 +71,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _ = dotenvy::dotenv();
+    let _ = dotenvy::from_filename("config");
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -98,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
         .timeout(Duration::from_secs(config.request_timeout_secs))
         .build()?;
 
-    let url_crypto = Arc::new(UrlCrypto::from_key(&config.decrypt_key)?);
+    let url_crypto = Arc::new(UrlCrypto::from_password(&config.aes_password).unwrap());
     let state = AppState {
         client,
         config,
@@ -106,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = Router::new()
-        .route("/proxy", any(proxy))
+        .route("/data", any(proxy))
         .with_state(state.clone());
 
     info!("listening on {}", state.config.listen_addr);
@@ -121,16 +112,27 @@ async fn proxy(
     Query(params): Query<HashMap<String, String>>,
     req: Request<Body>,
 ) -> Result<Response, ProxyError> {
-    let encrypted = params.get(&state.config.url_param_name).ok_or_else(|| {
-        ProxyError::bad_request(format!(
-            "missing query param: {}",
-            state.config.url_param_name
-        ))
-    })?;
+    let encrypted = params
+        .get(&state.config.url_param_name)
+        .or_else(|| params.get("oeid"))
+        .ok_or_else(|| {
+            ProxyError::bad_request(format!(
+                "missing query param: {}",
+                state.config.url_param_name
+            ))
+        })?;
 
     let upstream_url = state
         .url_crypto
-        .decrypt_to_url(encrypted)
+        .decrypt_param(encrypted)
+        .map(|s| format!("https://x.com/?{}", s.trim_start_matches('&')))
+        .and_then(|u| Ok(Url::parse(&u)?))
+        .and_then(|url| {
+            url.query_pairs()
+                .find(|(k, _)| k == "url")
+                .map(|(_, v)| v.into_owned())
+                .ok_or_else(|| "missing url".into())
+        })
         .map_err(|e| ProxyError::bad_request(e.to_string()))?;
 
     let method = req.method().clone();
